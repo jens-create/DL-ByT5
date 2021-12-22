@@ -23,3 +23,6 @@ masked-word-2-word approach:
 
 
 contact us at s183568@student.dtu.dk or s193713@student.dtu.dk
+
+
+#TODO: Læs rapport igennem og skriv result afsnit
