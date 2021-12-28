@@ -10,7 +10,7 @@ The data that we have fine-tuned with are not public, hence we can only upload a
 
 We use the word-error-rate, BLEU and GLEU scores as performance metrics.
 
-We have gathered our main findings in two jupyter notebooks, each corresponding to an approach. They should be viewed as demos. For the "working" code we refer to the folders named "<approach>"_individual_files. The fine-tuning, inferring and evaluation of the models is located in these folders.
+We have gathered our main findings in two jupyter notebooks, each corresponding to an approach. They should be viewed as demos. For the "working" code we refer to the folders named "approach"_individual_files. The fine-tuning, inferring and evaluation of the models is located in these folders.
 
 sentence-2-sentence approach:
 - See ByT5.ipynb for training, inferring, evaluation and visualisation of the model.
