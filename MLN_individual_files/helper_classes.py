@@ -286,3 +286,84 @@ def get_train_dataloader(dataset,tokenizer):
         dataset, batch_size=8, shuffle=False, drop_last=True,
         num_workers=0, collate_fn=collate_fn
     )
+
+
+
+import Levenshtein as Lev
+def wer(s1, s2):
+    """
+    Computes the Word Error Rate, defined as the edit distance between the
+    two provided sentences after tokenizing to words.
+    Arguments:
+        s1 (string): space-separated sentence
+        s2 (string): space-separated sentence
+    """
+
+    # build mapping of words to integers
+    b = set(s1.split() + s2.split())
+    word2char = dict(zip(b, range(len(b))))
+
+    # map the words to a char array (Levenshtein packages only accepts
+    # strings)
+    w1 = [chr(word2char[w]) for w in s1.split()]
+    w2 = [chr(word2char[w]) for w in s2.split()]
+
+    return Lev.distance(''.join(w1), ''.join(w2))
+
+def wer_normalized(s1, s2):
+  return wer(s1.lower(),s2.lower()) / len(s2.split(" "))
+def calculate_wer(df):
+  return wer_normalized(df['corrected'],df['reference_text'])
+
+from nltk.translate.bleu_score import sentence_bleu
+from nltk.translate.gleu_score import sentence_gleu
+
+
+def calculate_bleu_baseline_normalized(df):
+  total_bleu = 0
+  for i in range(len(df)):
+    ref = [df['reference_text'].iloc[i].split(" ")]
+    hyp = df['transcription'].iloc[i].split(" ")
+    sentence_bleu_score = sentence_bleu(ref, hyp)
+    total_bleu += sentence_bleu_score
+  return total_bleu / len(df)
+
+def calculate_gleu_baseline_normalized(df):
+  total_gleu = 0
+  for i in range(len(df)):
+    ref = [df['reference_text'].iloc[i].split(" ")]
+    hyp = df['transcription'].iloc[i].split(" ")
+    sentence_gleu_score = sentence_gleu(ref, hyp)
+    total_gleu += sentence_gleu_score
+  return total_gleu / len(df)
+
+def calculate_bleu_normalized(df):
+  total_bleu = 0
+  for i in range(len(df)):
+    ref = [df['reference_text'].iloc[i].split(" ")]
+    hyp = df['corrected'].iloc[i].split(" ")
+    sentence_bleu_score = sentence_bleu(ref, hyp)
+    total_bleu += sentence_bleu_score
+  return total_bleu / len(df)
+
+def calculate_gleu_normalized(df):
+  total_gleu = 0
+  for i in range(len(df)):
+    ref = [df['reference_text'].iloc[i].split(" ")]
+    hyp = df['corrected'].iloc[i].split(" ")
+    sentence_gleu_score = sentence_gleu(ref, hyp)
+    total_gleu += sentence_gleu_score
+  return total_gleu / len(df)
+
+
+  def open_dataset(path, load_outputs=True):
+    with open(path) as f:
+        sentences = f.read().split("\n\n")[:-1]
+    sentences = [s.split('\n') for s in sentences]
+    inputs = [[w.split('\t')[0] for w in s] for s in sentences]
+
+    if not load_outputs:
+        return inputs
+
+    outputs = [[w.split('\t')[1] for w in s] for s in sentences]
+    return inputs, outputs
