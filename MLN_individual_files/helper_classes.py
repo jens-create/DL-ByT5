@@ -1,4 +1,13 @@
 from torch.utils.data import Dataset
+from transformers import T5ForConditionalGeneration, AutoTokenizer
+import torch
+from MLN_individual_files.helper_classes import *
+import numpy as np
+import pickle
+from transformers import get_scheduler
+from transformers import AdamW
+from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
 
 class AbstractDataset(Dataset):
@@ -137,3 +146,143 @@ class CollateFunctor_Train:
         }
         batch["labels"][batch["labels"] == self.tokenizer.pad_token_id] = -100  # used to mask the loss in T5
         return batch
+
+import os
+import os.path
+
+class OutputAssembler:
+    def __init__(self, directory, dataset):
+        self.directory = directory
+        self.dataset = dataset
+        self.postprocessing = {
+            "none": NonePostprocessor,
+            "alnum": AlnumPostprocessor,
+        }['alnum'](1.0)
+
+        self.cache = {}
+
+    def step(self, output_dict):
+        output_dict = (output_dict["predictions"], output_dict["scores"], output_dict["sentence_ids"], output_dict["word_ids"])
+        for word_preds, scores, sent_id, word_id in zip(*output_dict):
+            word_preds = [w.replace('\n', '').replace('\t', ' ') for w in word_preds]
+            pairs = list(zip(word_preds, scores))
+
+            self.cache.setdefault(sent_id, {})[word_id] = pairs
+
+    def flush(self):
+        predictions = self.assemble(self.cache)
+        inputs = self.dataset.inputs
+
+        raw_path = f"{self.directory}/raw_outputs_mln_base.txt"
+        postprocessed_path = f"{self.directory}/outputs_mln_base.txt"
+
+        if not os.path.isdir(self.directory):
+            os.mkdir(self.directory)
+
+        with open(raw_path, "w") as f:
+            for i, input_sentence in enumerate(inputs):
+                for j, input_word in enumerate(input_sentence):
+                    try:
+                        prediction_string = '\t'.join([f"{w}\t{s}" for w, s in predictions[i][j]])
+                    except:
+                        print(i, j, len(predictions[i]))
+                        for k, p in enumerate(predictions[i]):
+                            print(k, p)
+                        print(flush=True)
+                        exit()
+                    line = f"{input_word}\t{prediction_string}"
+                    f.write(f"{line}\n")
+                f.write("\n")
+
+        self.postprocessing.process_file(raw_path, postprocessed_path)
+
+    def assemble(self, prediction_dict):
+        prediction_list = []
+        for sent_id, raw_sentence in enumerate(self.dataset.inputs):
+            prediction_list.append(
+                [prediction_dict.get(sent_id, {}).get(word_id, [(raw_word, 0.0)]) for word_id, raw_word in enumerate(raw_sentence)]
+            )
+
+        return prediction_list
+
+class AbstractPostprocessor:
+    def __init__(self, bias=1.0):
+        self.bias = bias
+
+    def __call__(self, raw, predictions):
+        pass
+
+    def process_file(self, input_path, output_path):
+        with open(input_path, "r") as f:
+            sentences = f.read().split("\n\n")[:-1]
+            sentences = [s.split('\n') for s in sentences]
+
+        with open(output_path, "w") as f:
+            for sentence in sentences:
+                for word in sentence:
+                    raw, *predictions = word.split('\t')
+                    predictions = [(word, float(score)) for word, score in zip(predictions[::2], predictions[1::2])]
+                    prediction = self(raw, predictions)
+                    f.write(f"{raw}\t{prediction}\n")
+                f.write("\n")
+
+    def rebalance(self, raw, predictions):
+        predictions = [(w, s) if w != raw else (w, s*self.bias) for w, s in predictions]
+        predictions = sorted(predictions, key=lambda item: item[1], reverse=True)
+        return predictions
+
+
+class NonePostprocessor(AbstractPostprocessor):
+    def __call__(self, raw, predictions):
+        predictions = self.rebalance(raw, predictions)
+        return predictions[0][0]
+
+
+class AlnumPostprocessor(AbstractPostprocessor):
+    def __call__(self, raw, predictions):
+        if raw.isdigit() and len(raw) > 1:
+            return raw
+        if not raw.replace("'", "").isalnum():
+            return raw
+        predictions = self.rebalance(raw, predictions)
+        return predictions[0][0]
+
+class CollateFunctor:
+    def __init__(self, tokenizer, encoder_max_length, decoder_max_length):
+        self.tokenizer = tokenizer
+        self.encoder_max_length = encoder_max_length
+        self.decoder_max_length = decoder_max_length
+
+    def __call__(self, samples):
+        inputs, outputs, sentence_indices, word_indices = map(list, zip(*samples))
+        
+        inputs = self.tokenizer(
+            inputs, padding=True, truncation=True, pad_to_multiple_of=8,
+            max_length=self.encoder_max_length, return_attention_mask=True, return_tensors='pt'
+        )
+        outputs = self.tokenizer(
+            outputs, padding=True, truncation=True, pad_to_multiple_of=8,
+            max_length=self.decoder_max_length, return_attention_mask=True, return_tensors='pt'
+        )
+        
+
+        batch = {
+            "input_ids": inputs.input_ids,
+            "attention_mask": inputs.attention_mask,
+            "labels": outputs.input_ids,
+            "decoder_attention_mask": outputs.attention_mask,
+            "word_ids": word_indices,
+            "sentence_ids": sentence_indices
+        }
+        batch["labels"][batch["labels"] == self.tokenizer.pad_token_id] = -100  # used to mask the loss in T5
+        return batch
+
+from torch.utils.data import DataLoader
+from torch.optim import AdamW
+def get_train_dataloader(dataset,tokenizer):
+    collate_fn = CollateFunctor(tokenizer, 320, 32)
+
+    return DataLoader(
+        dataset, batch_size=8, shuffle=False, drop_last=True,
+        num_workers=0, collate_fn=collate_fn
+    )
